@@ -16,7 +16,7 @@ conn = engine.connect()
 ctx = MigrationContext.configure(conn)
 op = Operations(ctx)
 
-for table in ('cars', 'houses', 'persons'):
+for table in ('person_car', 'cars', 'houses', 'persons'):
     op.drop_table(table)
 
 
@@ -59,7 +59,7 @@ class PersonTest(unittest.TestCase):
 
         field = sa.Column('owner_id', sa.Integer, sa.ForeignKey('persons.id'))
         relation = orm.relationship('Person',
-                backref=orm.backref('houses'))
+                backref=orm.backref('houses', lazy='dynamic'))
         self.__class__.House.owner_id = field
         self.__class__.House.owner = relation
 
@@ -73,7 +73,38 @@ class PersonTest(unittest.TestCase):
         house = session.query(self.__class__.House).first()
 
         self.assertEqual(house.owner, owner)
-        self.assertEqual(owner.houses, [house])
+        # also test the reverse relation
+        self.assertEqual(owner.houses.all(), [house])
 
     def test_003_create_many_to_many(self):
-        pass
+        association_table = sa.Table('person_car', Base.metadata,
+            sa.Column('person_id', sa.Integer, sa.ForeignKey('persons.id')),
+            sa.Column('car_id', sa.Integer, sa.ForeignKey('cars.id'))
+        )
+
+        Base.metadata.create_all(engine)
+
+        self.__class__.Person.cars = orm.relationship('Car',
+                secondary=association_table,
+                backref=orm.backref('persons', lazy='dynamic'))
+
+        user1 = session.query(self.__class__.Person).first()
+        user2 = self.__class__.Person()
+        session.add(user2)
+
+        car1 = self.__class__.Car()
+        session.add(car1)
+        car2 = self.__class__.Car()
+        session.add(car2)
+
+        user1.cars.append(car1)
+        car2.persons.append(user1)
+        session.commit()
+
+        fresh_user1 = session.query(self.__class__.Person).get(user1.id)
+        self.assertEqual(len(fresh_user1.cars), 2)
+        self.assertTrue(car1 in fresh_user1.cars)
+        self.assertTrue(car2 in fresh_user1.cars)
+
+        fresh_car1 = session.query(self.__class__.Car).get(car1.id)
+        self.assertEqual(fresh_car1.persons.all(), [user1])
